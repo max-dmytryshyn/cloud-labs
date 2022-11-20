@@ -17,12 +17,13 @@ def get_db_connection():
     sslmode = os.getenv("DB_SSLMODE")
     return psycopg2.connect(host=host, port=port, dbname=dbname, user=user, password=password,  sslmode=sslmode)
 
-def prepare_temperature_sensor_data(temperature_sensor_data_tuple):
+def prepare_sensor_data(sensor_data_tuple):
     return {
-        "id": temperature_sensor_data_tuple[0],
-        "temperature": temperature_sensor_data_tuple[1],
-        "datetime": str(temperature_sensor_data_tuple[2]),
-        "address": temperature_sensor_data_tuple[3]
+        "id": sensor_data_tuple[0],
+        "value": sensor_data_tuple[1],
+        "type": sensor_data_tuple[2],
+        "datetime": str(sensor_data_tuple[3]),
+        "address": sensor_data_tuple[4]
     }
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -31,16 +32,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     db_cursor = db_connection.cursor()
 
     if req.method == func.HttpMethod.GET.value:
-        db_cursor.execute("SELECT id, value, datetime, address FROM sensors_data WHERE type='TEMPERATURE';")
-        temperature_sensors_data = db_cursor.fetchall()
-        temperature_sensors_data_dicts = []
-        for temperature_sensor_data in temperature_sensors_data:
-            temperature_sensors_data_dicts.append(prepare_temperature_sensor_data(temperature_sensor_data))
-        temperature_sensors_data_string = str(temperature_sensors_data_dicts)
+        type = req.params.get('type')
+        sql_query_string = "SELECT id, value, type, datetime, address FROM sensors_data"
+        sql_query_string += " WHERE type='{}';".format(type) if type else ';'
+        db_cursor.execute(sql_query_string)
+        sensors_data = db_cursor.fetchall()
+        sensors_data_dicts = []
+        for sensor_data in sensors_data:
+            sensors_data_dicts.append(prepare_sensor_data(sensor_data))
+        sensors_data_string = str(sensors_data_dicts)
         db_cursor.close()
         db_connection.close()
         return func.HttpResponse(
-            body=temperature_sensors_data_string,
+            body=sensors_data_string,
             status_code=200
         )
 
@@ -49,28 +53,35 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             req_body = req.get_json()
         except ValueError:
             return func.HttpResponse("Body is not a valid JSON", status_code=400)
-        temperature = req_body.get("temperature")
+        type = req_body.get('type')
+        value = req_body.get("value")
         datetime = req_body.get("datetime")
         address = req_body.get("address")
 
-        if temperature is not None and datetime and address:
+        if value is not None and datetime and address and type:
+            if type not in ('TEMPERATURE', 'HUMIDITY', 'LUMINOSITY'):
+                return func.HttpResponse("Luminosity must be between 0 and 100", status_code=400)
+            if (type == 'HUMIDITY' or type == 'LUMINOSITY') and (value < 0 or value > 100):
+                return func.HttpResponse("Value must be between 0 and 100", status_code=400)
+                
             db_cursor.execute(
                 f"INSERT INTO public.sensors_data(value, datetime, address, type)"
-                f"VALUES ({temperature}, '{datetime}', '{address}', 'TEMPERATURE')"
-                f"RETURNING id, value, datetime, address;"
+                f"VALUES ({value}, '{datetime}', '{address}', '{type}')"
+                f"RETURNING id, value, type, datetime, address;"
             )
             new_record = db_cursor.fetchone()
-            new_record_string = str(prepare_temperature_sensor_data(new_record))
+            new_record_string = str(prepare_sensor_data(new_record))
             db_connection.commit()
             db_cursor.close()
             db_connection.close()
             return func.HttpResponse(new_record_string, status_code=200)
-
+                
         else:
             error_message = ''
-            error_message += "Temperature is required. " if temperature is None else ''
+            error_message += "Value is required. " if value is None else ''
             error_message += "Datetime is required. " if not datetime else ''
             error_message += "Address is required. " if not address else ''
+            error_message += "Type is required. " if not type else ''
             db_cursor.close()
             db_connection.close()
             return func.HttpResponse(error_message, status_code=400)
