@@ -20,10 +20,10 @@ def get_db_connection():
 
 def prepare_sensor_data(sensor_data_tuple):
     return {
+        "datetime": str(sensor_data_tuple[3]),
         "id": sensor_data_tuple[0],
         "value": sensor_data_tuple[1],
         "type": sensor_data_tuple[2],
-        "datetime": str(sensor_data_tuple[3]),
         "address": sensor_data_tuple[4]
     }
 
@@ -36,13 +36,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == func.HttpMethod.GET.value:
         type = req.params.get('type')
         sql_query_string = "SELECT id, value, type, datetime, address FROM sensors_data"
-        sql_query_string += " WHERE type='{}';".format(type) if type else ';'
+        sql_query_string += " WHERE type='{}'".format(type) if type else ''
+        sql_query_string += " ORDER BY datetime DESC;"
         db_cursor.execute(sql_query_string)
         sensors_data = db_cursor.fetchall()
         sensors_data_dicts = []
         for sensor_data in sensors_data:
             sensors_data_dicts.append(prepare_sensor_data(sensor_data))
-        sensors_data_string = str(sensors_data_dicts)
+        sensors_data_string = ''.join(str(sensor_data_dict) + '\n' for sensor_data_dict in sensors_data_dicts)
         db_cursor.close()
         db_connection.close()
         return func.HttpResponse(
